@@ -1,4 +1,4 @@
-# mario-silbings
+# mario-siblings
 A simple game to study the ECS model
 
 ## Prerequisite
