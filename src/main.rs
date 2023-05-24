@@ -4,6 +4,7 @@ use bevy::{
     prelude::*,
     sprite::collide_aabb::{collide, Collision},
     time::FixedTimestep,
+    window,
 };
 
 const TIME_STEP: f32 = 1.0 / 60.0;
@@ -34,19 +35,19 @@ const STAGE: [&str; 25] = [
     "|________________________________|",
     "|________________________________|",
     "|________________________________|",
-    "|XXXXXXXXXXXXXX____XXXXXXXXXXXXXX|",
+    "|XXXXXXXXXXXXX]____[XXXXXXXXXXXXX|",
     "|________________________________|",
     "|________________________________|",
     "|________________________________|",
     "|________________________________|",
     "|________________________________|",
-    "|________XXXXXXXXXXXXXXXX________|",
-    "|XXXX________________________XXXX|",
+    "|________[XXXXXXXXXXXXXX]________|",
+    "|XXX]________________________[XXX|",
     "|________________________________|",
     "|________________________________|",
     "|________________________________|",
     "|________________________________|",
-    "|XXXXXXXXXXXX________XXXXXXXXXXXX|",
+    "|XXXXXXXXXXX]________[XXXXXXXXXXX|",
     "|________________________________|",
     "|________________M_______________|",
     "|________________________________|",
@@ -59,8 +60,8 @@ fn main() {
     App::new()
         .add_plugins(DefaultPlugins.set(WindowPlugin {
             window: WindowDescriptor {
-                width: SCREEN_WIDTH as f32,
-                height: SCREEN_HEIGHT as f32,
+                width: SCREEN_WIDTH,
+                height: SCREEN_HEIGHT,
                 ..default()
             },
             ..default()
@@ -76,11 +77,45 @@ fn main() {
                 .with_system(apply_velocity.before(move_mario))
                 .with_system(move_mario.before(check_for_collisions)),
         )
+        .add_system(window::close_on_esc)
         .run();
 }
 
 #[derive(Component)]
-struct Block;
+struct Block {
+    collision_top: bool,
+    collision_bottom: bool,
+    collision_right: bool,
+    collision_left: bool,
+}
+
+impl Block {
+    fn normal_block() -> Self {
+        Self {
+            collision_top: true,
+            collision_bottom: true,
+            collision_right: false,
+            collision_left: false,
+        }
+    }
+
+    fn left_edge_block() -> Self {
+        Self {
+            collision_top: true,
+            collision_bottom: true,
+            collision_right: false,
+            collision_left: true,
+        }
+    }
+    fn right_edge_block() -> Self {
+        Self {
+            collision_top: true,
+            collision_bottom: true,
+            collision_right: true,
+            collision_left: false,
+        }
+    }
+}
 
 #[derive(Component)]
 struct Mario {
@@ -104,16 +139,18 @@ fn make_stage(mut commands: Commands) {
                 (j as isize - STAGE_X_OFFSET - (STAGE_WIDTH / 2)) as f32 * UNIT + 0.5 * UNIT;
             let y_coord = (-(i as isize) + (STAGE_HEIGHT / 2)) as f32 * UNIT;
             match c {
-                b'X' => spawn_block(&mut commands, x_coord, y_coord),
+                b'X' => spawn_block(&mut commands, Block::normal_block(), x_coord, y_coord),
+                b']' => spawn_block(&mut commands, Block::right_edge_block(), x_coord, y_coord),
+                b'[' => spawn_block(&mut commands, Block::left_edge_block(), x_coord, y_coord),
                 b'M' => spawn_mario(&mut commands, x_coord, y_coord),
-                b'|' => spawn_block(&mut commands, x_coord, y_coord),
+                b'|' => spawn_block(&mut commands, Block::normal_block(), x_coord, y_coord),
                 _ => {}
             };
         }
     }
 }
 
-fn spawn_block(commands: &mut Commands, x_coord: f32, y_coord: f32) {
+fn spawn_block(commands: &mut Commands, block: Block, x_coord: f32, y_coord: f32) {
     commands.spawn((
         SpriteBundle {
             transform: Transform {
@@ -123,7 +160,7 @@ fn spawn_block(commands: &mut Commands, x_coord: f32, y_coord: f32) {
             },
             ..default()
         },
-        Block,
+        block,
     ));
 }
 
@@ -188,41 +225,49 @@ fn check_for_collisions(
     let mario_size = mario_transform.scale.truncate();
     mario.is_on_ground = false;
 
-    for (transform, _) in &block_query {
-        let collision = collide(
-            mario_transform.translation,
-            mario_size,
+    for (transform, block) in &block_query {
+        let mario_collision = collide(
             transform.translation,
             transform.scale.truncate(),
+            mario_transform.translation,
+            mario_size,
         );
-        if let Some(collision) = collision {
+        if let Some(collision) = mario_collision {
             collision_events.send_default();
 
             match collision {
                 Collision::Left => {
-                    mario_transform.translation.x = transform.translation.x
-                        - transform.scale.truncate().x / 2.0
-                        - mario_size.x / 2.0;
+                    if block.collision_right {
+                        mario_transform.translation.x = transform.translation.x
+                            + transform.scale.truncate().x / 2.0
+                            + mario_size.x / 2.0;
+                    }
                 }
                 Collision::Right => {
-                    mario_transform.translation.x = transform.translation.x
-                        + transform.scale.truncate().x / 2.0
-                        + mario_size.x / 2.0;
+                    if block.collision_left {
+                        mario_transform.translation.x = transform.translation.x
+                            - transform.scale.truncate().x / 2.0
+                            - mario_size.x / 2.0;
+                    }
                 }
                 Collision::Top => {
-                    if mario_velocity.y <= 0.0 {
-                        mario_velocity.x = 0.0;
-                        mario_velocity.y = 0.0;
+                    if block.collision_bottom {
                         mario_transform.translation.y = transform.translation.y
-                            + transform.scale.truncate().y / 2.0
-                            + mario_size.y / 2.0;
+                            - transform.scale.truncate().y / 2.0
+                            - mario_size.y / 2.0;
                     }
-                    mario.is_on_ground = true;
                 }
                 Collision::Bottom => {
-                    mario_transform.translation.y = transform.translation.y
-                        - transform.scale.truncate().y / 2.0
-                        - mario_size.y / 2.0;
+                    if block.collision_top {
+                        if mario_velocity.y <= 0.0 {
+                            mario_velocity.x = 0.0;
+                            mario_velocity.y = 0.0;
+                            mario_transform.translation.y = transform.translation.y
+                                + transform.scale.truncate().y / 2.0
+                                + mario_size.y / 2.0;
+                        }
+                        mario.is_on_ground = true;
+                    }
                 }
                 Collision::Inside => {}
             }
