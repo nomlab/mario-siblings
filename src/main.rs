@@ -26,34 +26,34 @@ const JUMP_SPEED: f32 = 7.0;
 const GRAVITY: f32 = 0.4;
 
 const BACKGROUND_COLOR: Color = Color::rgb(0.0, 0.0, 0.0);
-const MARIO_COLOR: Color = Color::rgb(1.0, 0.0, 0.0);
+// const MARIO_COLOR: Color = Color::rgb(1.0, 0.0, 0.0);
 
 const STAGE: [&str; 25] = [
-    "|XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX|",
+    "XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX",
     "|________________________________|",
     "|________________________________|",
     "|________________________________|",
     "|________________________________|",
     "|________________________________|",
-    "|XXXXXXXXXXXXX]____[XXXXXXXXXXXXX|",
+    "XXXXXXXXXXXXXX]____[XXXXXXXXXXXXXX",
     "|________________________________|",
     "|________________________________|",
     "|________________________________|",
     "|________________________________|",
     "|________________________________|",
     "|________[XXXXXXXXXXXXXX]________|",
-    "|XXX]________________________[XXX|",
+    "XXXX]________________________[XXXX",
     "|________________________________|",
     "|________________________________|",
     "|________________________________|",
     "|________________________________|",
-    "|XXXXXXXXXXX]________[XXXXXXXXXXX|",
+    "XXXXXXXXXXXX]________[XXXXXXXXXXXX",
     "|________________________________|",
     "|________________M_______________|",
     "|________________________________|",
     "|________________________________|",
     "|________________________________|",
-    "|XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX|",
+    "XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX",
 ];
 
 fn main() {
@@ -87,6 +87,7 @@ struct Block {
     collision_bottom: bool,
     collision_right: bool,
     collision_left: bool,
+    outside: bool,
 }
 
 impl Block {
@@ -96,6 +97,7 @@ impl Block {
             collision_bottom: true,
             collision_right: false,
             collision_left: false,
+            outside: false,
         }
     }
 
@@ -105,6 +107,7 @@ impl Block {
             collision_bottom: true,
             collision_right: false,
             collision_left: true,
+            outside: false,
         }
     }
     fn right_edge_block() -> Self {
@@ -113,6 +116,16 @@ impl Block {
             collision_bottom: true,
             collision_right: true,
             collision_left: false,
+            outside: false,
+        }
+    }
+    fn outside_block() -> Self {
+        Self {
+            collision_top: false,
+            collision_bottom: false,
+            collision_right: false,
+            collision_left: false,
+            outside: true,
         }
     }
 }
@@ -132,7 +145,7 @@ fn setup(mut commands: Commands) {
     commands.spawn(Camera2dBundle::default());
 }
 
-fn make_stage(mut commands: Commands) {
+fn make_stage(mut commands: Commands, asset_server: Res<AssetServer>) {
     for (i, stage_row) in STAGE.iter().enumerate() {
         for (j, c) in stage_row.as_bytes().iter().enumerate() {
             let x_coord =
@@ -142,8 +155,8 @@ fn make_stage(mut commands: Commands) {
                 b'X' => spawn_block(&mut commands, Block::normal_block(), x_coord, y_coord),
                 b']' => spawn_block(&mut commands, Block::right_edge_block(), x_coord, y_coord),
                 b'[' => spawn_block(&mut commands, Block::left_edge_block(), x_coord, y_coord),
-                b'M' => spawn_mario(&mut commands, x_coord, y_coord),
-                b'|' => spawn_block(&mut commands, Block::normal_block(), x_coord, y_coord),
+                b'M' => spawn_mario(&mut commands, &asset_server, x_coord, y_coord),
+                b'|' => spawn_block(&mut commands, Block::outside_block(), x_coord, y_coord),
                 _ => {}
             };
         }
@@ -164,7 +177,8 @@ fn spawn_block(commands: &mut Commands, block: Block, x_coord: f32, y_coord: f32
     ));
 }
 
-fn spawn_mario(commands: &mut Commands, x_coord: f32, y_coord: f32) {
+fn spawn_mario(commands: &mut Commands, asset: &Res<AssetServer>, x_coord: f32, y_coord: f32) {
+    let texture: Handle<Image> = asset.load("moo.png");
     commands.spawn((
         SpriteBundle {
             transform: Transform {
@@ -172,8 +186,9 @@ fn spawn_mario(commands: &mut Commands, x_coord: f32, y_coord: f32) {
                 scale: MARIO_SIZE,
                 ..default()
             },
+            texture,
             sprite: Sprite {
-                color: MARIO_COLOR,
+                custom_size: Some(Vec2::new(1.0, 1.0)),
                 ..default()
             },
             ..default()
@@ -269,7 +284,16 @@ fn check_for_collisions(
                         mario.is_on_ground = true;
                     }
                 }
-                Collision::Inside => {}
+                Collision::Inside => {
+                    let mario_x_position = mario_transform.translation.x;
+                    if block.outside {
+                        if mario_x_position.is_sign_positive() {
+                            mario_transform.translation.x = -(mario_x_position - MARIO_SIZE.x / 2.0)
+                        } else {
+                            mario_transform.translation.x = -(mario_x_position + MARIO_SIZE.x / 2.0)
+                        }
+                    }
+                }
             }
         }
     }
