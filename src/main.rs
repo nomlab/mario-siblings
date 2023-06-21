@@ -73,9 +73,8 @@ fn main() {
         .add_system_set(
             SystemSet::new()
                 .with_run_criteria(FixedTimestep::step(TIME_STEP as f64))
-                .with_system(check_for_collisions)
-                .with_system(apply_velocity.before(move_mario))
-                .with_system(move_mario.before(check_for_collisions)),
+                .with_system(update_velocity.before(move_mario))
+                .with_system(move_mario),
         )
         .add_system(window::close_on_esc)
         .run();
@@ -200,24 +199,48 @@ fn spawn_mario(commands: &mut Commands, asset: &Res<AssetServer>, x_coord: f32, 
     ));
 }
 
-fn apply_velocity(
+// マリオの速度を計算して代入する
+fn update_velocity(
+    mut mario_query: Query<(&mut Velocity, &Transform, &Mario), With<Mario>>,
+    block_query: Query<(&Transform, &Block), Without<Mario>>,
     keyboard_input: Res<Input<KeyCode>>,
-    mut mario_query: Query<(&mut Velocity, &Mario), With<Mario>>,
 ) {
-    let (mut mario_velocity, mario) = mario_query.single_mut();
+    let (mut mario_velocity, mario_transform, mario) = mario_query.single_mut();
 
-    if mario.is_on_ground && mario_velocity.y == 0.0 {
+    let (mut dx, mut dy) = calc_velocity(mario.is_on_ground, keyboard_input);
+    dx += mario_velocity.x;
+    dy += mario_velocity.y;
+
+    let mario_pos = Vec3::new(
+        mario_transform.translation.x + dx,
+        mario_transform.translation.y + dy,
+        0.0,
+    );
+    check_for_collisions(mario_pos, MARIO_SIZE, block_query);
+
+    mario_velocity.x = dx;
+    mario_velocity.y = dy;
+}
+
+fn calc_velocity(mario_on_ground: bool, keyboard_input: Res<Input<KeyCode>>) -> (f32, f32) {
+    let mut dx = 0.0;
+    let mut dy = 0.0;
+
+    dy -= GRAVITY;
+
+    if mario_on_ground {
         if keyboard_input.pressed(KeyCode::Left) {
-            mario_velocity.x = -WALKING_SPEED;
+            dx = -WALKING_SPEED;
         }
         if keyboard_input.pressed(KeyCode::Right) {
-            mario_velocity.x = WALKING_SPEED;
+            dx = WALKING_SPEED;
         }
-        if keyboard_input.pressed(KeyCode::Up) {
-            mario_velocity.y = JUMP_SPEED;
+        if keyboard_input.just_pressed(KeyCode::Up) {
+            dy = JUMP_SPEED;
         }
         if keyboard_input.pressed(KeyCode::Down) {}
     }
+    (dx, dy)
 }
 
 fn move_mario(mut mario_query: Query<(&mut Velocity, &mut Transform), With<Mario>>) {
@@ -227,29 +250,24 @@ fn move_mario(mut mario_query: Query<(&mut Velocity, &mut Transform), With<Mario
 
     mario_transform.translation.x = current_x_pos + mario_velocity.x;
     mario_transform.translation.y = current_y_pos + mario_velocity.y;
-    // Apply gravity!
-    mario_velocity.y -= GRAVITY;
 }
 
 fn check_for_collisions(
-    mut mario_query: Query<(&mut Velocity, &mut Transform, &mut Mario), Without<Block>>,
+    mario_pos: Vec3,
+    mario_size: Vec3,
     block_query: Query<(&Transform, &Block), Without<Mario>>,
-    mut collision_events: EventWriter<CollisionEvent>,
-) {
-    let (mut mario_velocity, mut mario_transform, mut mario) = mario_query.single_mut();
-    let mario_size = mario_transform.scale.truncate();
-    mario.is_on_ground = false;
+) -> (f32, f32, bool) {
+    let mario_size = mario_size.truncate();
+    let (mut dx, mut dy) = (0.0, 0.0);
 
     for (transform, block) in &block_query {
         let mario_collision = collide(
             transform.translation,
             transform.scale.truncate(),
-            mario_transform.translation,
+            mario_pos,
             mario_size,
         );
         if let Some(collision) = mario_collision {
-            collision_events.send_default();
-
             match collision {
                 Collision::Left => {
                     if block.collision_right {
@@ -297,4 +315,5 @@ fn check_for_collisions(
             }
         }
     }
+    (dx, dy, true)
 }
