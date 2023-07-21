@@ -47,9 +47,9 @@ const STAGE: [&str; 25] = [
     "|________________________________|",
     "|________________________________|",
     "|________________________________|",
-    "XXXXXXXXXXXX]________[XXXXXXXXXXXX",
+    "XXXXXXXXXXXX]____M___[XXXXXXXXXXXX",
     "|________________________________|",
-    "|________________M_______________|",
+    "|________________________________|",
     "|________________________________|",
     "|________________________________|",
     "|________________________________|",
@@ -73,8 +73,8 @@ fn main() {
         .add_system_set(
             SystemSet::new()
                 .with_run_criteria(FixedTimestep::step(TIME_STEP as f64))
-                .with_system(update_velocity.before(move_mario))
-                .with_system(move_mario),
+                .with_system(update_velocity.before(update_position))
+                .with_system(update_position),
         )
         .add_system(window::close_on_esc)
         .run();
@@ -201,34 +201,27 @@ fn spawn_mario(commands: &mut Commands, asset: &Res<AssetServer>, x_coord: f32, 
 
 // マリオの速度を計算して代入する
 fn update_velocity(
-    mut mario_query: Query<(&mut Velocity, &Transform, &Mario), With<Mario>>,
-    block_query: Query<(&Transform, &Block), Without<Mario>>,
+    mut mario_query: Query<(&mut Velocity, &Mario), With<Mario>>,
     keyboard_input: Res<Input<KeyCode>>,
 ) {
-    let (mut mario_velocity, mario_transform, mario) = mario_query.single_mut();
+    let (mut mario_velocity, mario) = mario_query.single_mut();
 
-    let (mut dx, mut dy) = calc_velocity(mario.is_on_ground, keyboard_input);
-    dx += mario_velocity.x;
-    dy += mario_velocity.y;
+    let (dx, dy) = calc_velocity(mario.is_on_ground, keyboard_input, &mut mario_velocity);
 
-    let mario_pos = Vec3::new(
-        mario_transform.translation.x + dx,
-        mario_transform.translation.y + dy,
-        0.0,
-    );
-    check_for_collisions(mario_pos, MARIO_SIZE, block_query);
-
-    mario_velocity.x = dx;
-    mario_velocity.y = dy;
+    mario_velocity.x += dx;
+    mario_velocity.y += dy;
 }
 
-fn calc_velocity(mario_on_ground: bool, keyboard_input: Res<Input<KeyCode>>) -> (f32, f32) {
+fn calc_velocity(mario_on_ground: bool, keyboard_input: Res<Input<KeyCode>>, mario_velocity: &mut Vec2) -> (f32, f32) {
     let mut dx = 0.0;
     let mut dy = 0.0;
 
     dy -= GRAVITY;
 
     if mario_on_ground {
+        println!("mario on ground");
+        mario_velocity.x = 0.0;
+        mario_velocity.y = 0.0;
         if keyboard_input.pressed(KeyCode::Left) {
             dx = -WALKING_SPEED;
         }
@@ -243,22 +236,34 @@ fn calc_velocity(mario_on_ground: bool, keyboard_input: Res<Input<KeyCode>>) -> 
     (dx, dy)
 }
 
-fn move_mario(mut mario_query: Query<(&mut Velocity, &mut Transform), With<Mario>>) {
-    let (mut mario_velocity, mut mario_transform) = mario_query.single_mut();
+fn update_position(
+    mut mario_query: Query<(&Velocity, &mut Transform, &mut Mario), With<Mario>>,
+    block_query: Query<(&Transform, &Block), Without<Mario>>) {
+    let (mario_velocity, mut mario_transform, mut mario) = mario_query.single_mut();
     let current_x_pos = mario_transform.translation.x;
     let current_y_pos = mario_transform.translation.y;
 
-    mario_transform.translation.x = current_x_pos + mario_velocity.x;
-    mario_transform.translation.y = current_y_pos + mario_velocity.y;
+    let mario_pos = Vec3::new(
+        current_x_pos + mario_velocity.x,
+        current_y_pos + mario_velocity.y,
+        0.0,
+    );
+    let (dx, dy, is_on_ground) = check_for_collisions(mario_pos, MARIO_SIZE, block_query, mario_velocity);
+
+    mario.is_on_ground = is_on_ground;
+    mario_transform.translation.x = mario_pos.x + dx;
+    mario_transform.translation.y = mario_pos.y + dy;
 }
 
 fn check_for_collisions(
     mario_pos: Vec3,
     mario_size: Vec3,
     block_query: Query<(&Transform, &Block), Without<Mario>>,
+    mario_velocity: &Velocity
 ) -> (f32, f32, bool) {
     let mario_size = mario_size.truncate();
     let (mut dx, mut dy) = (0.0, 0.0);
+    let mut is_on_ground = false;
 
     for (transform, block) in &block_query {
         let mario_collision = collide(
@@ -270,50 +275,105 @@ fn check_for_collisions(
         if let Some(collision) = mario_collision {
             match collision {
                 Collision::Left => {
-                    if block.collision_right {
-                        mario_transform.translation.x = transform.translation.x
-                            + transform.scale.truncate().x / 2.0
-                            + mario_size.x / 2.0;
+                    if block.collision_right{
+                        println!("collision_left");
+                        (dx, _) = standback(transform.translation, transform.scale.truncate(), mario_pos, mario_size, mario_velocity)
                     }
                 }
                 Collision::Right => {
-                    if block.collision_left {
-                        mario_transform.translation.x = transform.translation.x
-                            - transform.scale.truncate().x / 2.0
-                            - mario_size.x / 2.0;
+                    if block.collision_left{
+                        println!("collision_right");
+                        (dx, _) = standback(transform.translation, transform.scale.truncate(), mario_pos, mario_size, mario_velocity)
                     }
                 }
                 Collision::Top => {
-                    if block.collision_bottom {
-                        mario_transform.translation.y = transform.translation.y
-                            - transform.scale.truncate().y / 2.0
-                            - mario_size.y / 2.0;
+                    if block.collision_bottom{
+                        println!("collision_top");
+                        (_, dy) = standback(transform.translation, transform.scale.truncate(), mario_pos, mario_size, mario_velocity)
                     }
                 }
                 Collision::Bottom => {
-                    if block.collision_top {
-                        if mario_velocity.y <= 0.0 {
-                            mario_velocity.x = 0.0;
-                            mario_velocity.y = 0.0;
-                            mario_transform.translation.y = transform.translation.y
-                                + transform.scale.truncate().y / 2.0
-                                + mario_size.y / 2.0;
+                    if block.collision_top{
+                        println!("collision_bottom");
+                        if mario_velocity.y < 0.0 {
+                            is_on_ground = true;
                         }
-                        mario.is_on_ground = true;
+                        (_, dy) = standback(transform.translation, transform.scale.truncate(), mario_pos, mario_size, mario_velocity)
                     }
                 }
                 Collision::Inside => {
-                    let mario_x_position = mario_transform.translation.x;
+                    let mario_x_position = mario_pos.x;
                     if block.outside {
                         if mario_x_position.is_sign_positive() {
-                            mario_transform.translation.x = -(mario_x_position - MARIO_SIZE.x / 2.0)
+                            (dx, dy) = (-(mario_x_position - MARIO_SIZE.x / 2.0) - mario_x_position, 0.0) 
                         } else {
-                            mario_transform.translation.x = -(mario_x_position + MARIO_SIZE.x / 2.0)
+                            (dx, dy) = (-(mario_x_position + MARIO_SIZE.x / 2.0) - mario_x_position, 0.0)
                         }
                     }
                 }
             }
         }
     }
-    (dx, dy, true)
+    println!("collision:({},{},{})", dx, dy, is_on_ground);
+    (dx, dy, is_on_ground)
+}
+
+/// Axis-aligned bounding box collision with "side" detection
+/// * `a_pos` and `b_pos` are the center positions of the rectangles, typically obtained by
+/// extracting the `translation` field from a `Transform` component
+/// * `a_size` and `b_size` are the dimensions (width and height) of the rectangles.
+///
+/// Returns Vec2 that means how `B` should stand-back if `B` has collided with `A`.
+///
+fn standback(
+    a_pos: Vec3,
+    a_size: Vec2,
+    b_pos: Vec3,
+    b_size: Vec2,
+    b_velocity: &Velocity,
+) -> (f32, f32) {
+    let a_min = a_pos.truncate() - a_size / 2.0;
+    let a_max = a_pos.truncate() + a_size / 2.0;
+
+    let b_min = b_pos.truncate() - b_size / 2.0;
+    let b_max = b_pos.truncate() + b_size / 2.0;
+
+    // a A b B or b B a A
+    if a_max.x <= b_min.x || b_max.x <= a_min.x {
+        return (0.0, 0.0);
+    }
+    // a A b B or b B a A
+    if a_max.y <= b_min.y || b_max.y <= a_min.y {
+        return (0.0, 0.0);
+    }
+    let x_setback = if b_velocity.x < 0.0 {
+        (a_max.x - b_min.x).min(-b_velocity.x)
+    } else {
+        (a_min.x - b_max.x).min(-b_velocity.x)
+    };
+    let y_setback = if b_velocity.y < 0.0 {
+        // a b A B
+        // a b A B
+        // これはプラスの値で，|b_velocity.x| 以下になる筈
+        if (a_max.y - b_min.y) - (-b_velocity.y) > 0.001 {
+            // もし，そうでないなら，x 方向の補正はいらない状況だと考える
+            0.0
+        } else {
+            // (a_max.y - b_min.y).min(-b_velocity.y) 
+            a_max.y - b_min.y 
+        }
+    } else {
+        // b a B A
+        // b a B A
+        // これは，マイナスの値で，絶対値は b_velocity.x 以下になる筈
+        if -(a_min.y - b_max.y) - b_velocity.y > 0.001 {
+            // もし，そうでないなら，x 方向の補正はいらない状況だと考える
+            0.0
+        } else {
+            a_min.y - b_max.y
+        }
+    };
+    
+    println!("velocity({}, {}), x_setback:{}, y_setback:{}", b_velocity.x, b_velocity.y, x_setback, y_setback);
+    return (x_setback, y_setback);
 }
