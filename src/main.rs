@@ -212,7 +212,11 @@ fn update_velocity(
     mario_velocity.y += dy;
 }
 
-fn calc_velocity(mario_on_ground: bool, keyboard_input: Res<Input<KeyCode>>, mario_velocity: &mut Vec2) -> (f32, f32) {
+fn calc_velocity(
+    mario_on_ground: bool,
+    keyboard_input: Res<Input<KeyCode>>,
+    mario_velocity: &mut Vec2,
+) -> (f32, f32) {
     let mut dx = 0.0;
     let mut dy = 0.0;
 
@@ -238,7 +242,8 @@ fn calc_velocity(mario_on_ground: bool, keyboard_input: Res<Input<KeyCode>>, mar
 
 fn update_position(
     mut mario_query: Query<(&Velocity, &mut Transform, &mut Mario), With<Mario>>,
-    block_query: Query<(&Transform, &Block), Without<Mario>>) {
+    block_query: Query<(&Transform, &Block), Without<Mario>>,
+) {
     let (mario_velocity, mut mario_transform, mut mario) = mario_query.single_mut();
     let current_x_pos = mario_transform.translation.x;
     let current_y_pos = mario_transform.translation.y;
@@ -248,7 +253,8 @@ fn update_position(
         current_y_pos + mario_velocity.y,
         0.0,
     );
-    let (dx, dy, is_on_ground) = check_for_collisions(mario_pos, MARIO_SIZE, block_query, mario_velocity);
+    let (dx, dy, is_on_ground) =
+        check_for_collisions(mario_pos, MARIO_SIZE, block_query, mario_velocity);
 
     mario.is_on_ground = is_on_ground;
     mario_transform.translation.x = mario_pos.x + dx;
@@ -259,7 +265,7 @@ fn check_for_collisions(
     mario_pos: Vec3,
     mario_size: Vec3,
     block_query: Query<(&Transform, &Block), Without<Mario>>,
-    mario_velocity: &Velocity
+    mario_velocity: &Velocity,
 ) -> (f32, f32, bool) {
     let mario_size = mario_size.truncate();
     let (mut dx, mut dy) = (0.0, 0.0);
@@ -275,39 +281,69 @@ fn check_for_collisions(
         if let Some(collision) = mario_collision {
             match collision {
                 Collision::Left => {
-                    if block.collision_right{
+                    if block.collision_right {
                         println!("collision_left");
-                        (dx, _) = standback(transform.translation, transform.scale.truncate(), mario_pos, mario_size, mario_velocity)
+                        (dx, _) = standback(
+                            transform.translation,
+                            transform.scale.truncate(),
+                            mario_pos,
+                            mario_size,
+                            mario_velocity,
+                        )
                     }
                 }
                 Collision::Right => {
-                    if block.collision_left{
+                    if block.collision_left {
                         println!("collision_right");
-                        (dx, _) = standback(transform.translation, transform.scale.truncate(), mario_pos, mario_size, mario_velocity)
+                        (dx, _) = standback(
+                            transform.translation,
+                            transform.scale.truncate(),
+                            mario_pos,
+                            mario_size,
+                            mario_velocity,
+                        )
                     }
                 }
                 Collision::Top => {
-                    if block.collision_bottom{
+                    if block.collision_bottom {
                         println!("collision_top");
-                        (_, dy) = standback(transform.translation, transform.scale.truncate(), mario_pos, mario_size, mario_velocity)
+                        (_, dy) = standback(
+                            transform.translation,
+                            transform.scale.truncate(),
+                            mario_pos,
+                            mario_size,
+                            mario_velocity,
+                        )
                     }
                 }
                 Collision::Bottom => {
-                    if block.collision_top{
+                    if block.collision_top {
                         println!("collision_bottom");
                         if mario_velocity.y < 0.0 {
                             is_on_ground = true;
                         }
-                        (_, dy) = standback(transform.translation, transform.scale.truncate(), mario_pos, mario_size, mario_velocity)
+                        (_, dy) = standback(
+                            transform.translation,
+                            transform.scale.truncate(),
+                            mario_pos,
+                            mario_size,
+                            mario_velocity,
+                        )
                     }
                 }
                 Collision::Inside => {
                     let mario_x_position = mario_pos.x;
                     if block.outside {
                         if mario_x_position.is_sign_positive() {
-                            (dx, dy) = (-(mario_x_position - MARIO_SIZE.x / 2.0) - mario_x_position, 0.0) 
+                            (dx, dy) = (
+                                -(mario_x_position - MARIO_SIZE.x / 2.0) - mario_x_position,
+                                0.0,
+                            )
                         } else {
-                            (dx, dy) = (-(mario_x_position + MARIO_SIZE.x / 2.0) - mario_x_position, 0.0)
+                            (dx, dy) = (
+                                -(mario_x_position + MARIO_SIZE.x / 2.0) - mario_x_position,
+                                0.0,
+                            )
                         }
                     }
                 }
@@ -361,8 +397,8 @@ fn standback(
             // もし，そうでないなら，x 方向の補正はいらない状況だと考える
             0.0
         } else {
-            // (a_max.y - b_min.y).min(-b_velocity.y) 
-            a_max.y - b_min.y 
+            // (a_max.y - b_min.y).min(-b_velocity.y)
+            a_max.y - b_min.y
         }
     } else {
         // b a B A
@@ -375,7 +411,10 @@ fn standback(
             a_min.y - b_max.y
         }
     };
-    
-    println!("velocity({}, {}), x_setback:{}, y_setback:{}", b_velocity.x, b_velocity.y, x_setback, y_setback);
+
+    println!(
+        "velocity({}, {}), x_setback:{}, y_setback:{}",
+        b_velocity.x, b_velocity.y, x_setback, y_setback
+    );
     return (x_setback, y_setback);
 }
