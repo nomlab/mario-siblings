@@ -347,9 +347,11 @@ fn standback(
         return (0.0, 0.0);
     }
     let x_setback = if b_velocity.x < 0.0 {
+        // b_velocity.x が負なのでマリオの左側がぶつかっているので，右側に補正する
         (a_max.x - b_min.x).min(-b_velocity.x)
     } else {
-        (a_min.x - b_max.x).min(-b_velocity.x)
+        // b_velocity.x が正なのでマリオの右側がぶつかっているので，左側に補正する
+        (a_min.x - b_max.x).max(-b_velocity.x)
     };
     let y_setback = if b_velocity.y < 0.0 {
         // a b A B
