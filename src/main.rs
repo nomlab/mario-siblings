@@ -1,11 +1,6 @@
 // Written in Bevy 0.9.0dev
 
-use bevy::{
-    prelude::*,
-    sprite::collide_aabb::{collide, Collision},
-    time::FixedTimestep,
-    window,
-};
+use bevy::{prelude::*, time::FixedTimestep, window};
 
 const TIME_STEP: f32 = 1.0 / 60.0;
 
@@ -272,86 +267,59 @@ fn check_for_collisions(
     let mut is_on_ground = false;
 
     for (transform, block) in &block_query {
-        let mario_collision = collide(
+        if let Some(collision) = standback(
             transform.translation,
             transform.scale.truncate(),
             mario_pos,
             mario_size,
-        );
-        if let Some(collision) = mario_collision {
+            mario_velocity,
+        ) {
             match collision {
-                Collision::Left => {
-                    if block.collision_right {
-                        println!("collision_left");
-                        (dx, _) = standback(
-                            transform.translation,
-                            transform.scale.truncate(),
-                            mario_pos,
-                            mario_size,
-                            mario_velocity,
-                        )
-                    }
-                }
-                Collision::Right => {
-                    if block.collision_left {
-                        println!("collision_right");
-                        (dx, _) = standback(
-                            transform.translation,
-                            transform.scale.truncate(),
-                            mario_pos,
-                            mario_size,
-                            mario_velocity,
-                        )
-                    }
-                }
-                Collision::Top => {
-                    if block.collision_bottom {
-                        println!("collision_top");
-                        (_, dy) = standback(
-                            transform.translation,
-                            transform.scale.truncate(),
-                            mario_pos,
-                            mario_size,
-                            mario_velocity,
-                        )
-                    }
-                }
-                Collision::Bottom => {
+                Collision::Top((x_setback, y_setback)) => {
                     if block.collision_top {
-                        println!("collision_bottom");
-                        if mario_velocity.y < 0.0 {
-                            is_on_ground = true;
-                        }
-                        (_, dy) = standback(
-                            transform.translation,
-                            transform.scale.truncate(),
-                            mario_pos,
-                            mario_size,
-                            mario_velocity,
-                        )
+                        dx = x_setback;
+                        dy = y_setback;
+                        is_on_ground = true;
+                    }
+                }
+                Collision::Bottom((x_setback, y_setback)) => {
+                    if block.collision_bottom {
+                        dx = x_setback;
+                        dy = y_setback;
+                    }
+                }
+                Collision::Left((x_setback, y_setback)) => {
+                    if block.collision_left {
+                        dx = x_setback;
+                        dy = y_setback;
+                    }
+                }
+                Collision::Right((x_setback, y_setback)) => {
+                    if block.collision_right {
+                        dx = x_setback;
+                        dy = y_setback;
                     }
                 }
                 Collision::Inside => {
-                    let mario_x_position = mario_pos.x;
-                    if block.outside {
-                        if mario_x_position.is_sign_positive() {
-                            (dx, dy) = (
-                                -(mario_x_position - MARIO_SIZE.x / 2.0) - mario_x_position,
-                                0.0,
-                            )
-                        } else {
-                            (dx, dy) = (
-                                -(mario_x_position + MARIO_SIZE.x / 2.0) - mario_x_position,
-                                0.0,
-                            )
-                        }
-                    }
+                    // do nothing
                 }
             }
-        }
+        };
     }
-    println!("collision:({},{},{})", dx, dy, is_on_ground);
+    println!(
+        "collision:(dx: {}, dy: {}, is_on_ground: {})",
+        dx, dy, is_on_ground
+    );
     (dx, dy, is_on_ground)
+}
+
+#[derive(Debug)]
+enum Collision {
+    Top((f32, f32)),
+    Bottom((f32, f32)),
+    Left((f32, f32)),
+    Right((f32, f32)),
+    Inside,
 }
 
 /// Axis-aligned bounding box collision with "side" detection
@@ -367,54 +335,68 @@ fn standback(
     b_pos: Vec3,
     b_size: Vec2,
     b_velocity: &Velocity,
-) -> (f32, f32) {
+) -> Option<Collision> {
     let a_min = a_pos.truncate() - a_size / 2.0;
     let a_max = a_pos.truncate() + a_size / 2.0;
 
     let b_min = b_pos.truncate() - b_size / 2.0;
     let b_max = b_pos.truncate() + b_size / 2.0;
+    let b_velocity = Vec2::new(b_velocity.x, b_velocity.y);
 
     // a A b B or b B a A
     if a_max.x <= b_min.x || b_max.x <= a_min.x {
-        return (0.0, 0.0);
+        return None;
     }
     // a A b B or b B a A
     if a_max.y <= b_min.y || b_max.y <= a_min.y {
-        return (0.0, 0.0);
+        return None;
     }
-    let x_setback = if b_velocity.x < 0.0 {
-        // b_velocity.x が負なのでマリオの左側がぶつかっているので，右側に補正する
-        (a_max.x - b_min.x).min(-b_velocity.x)
+
+    let collide_point_x = if b_min.x < a_max.x {
+        // a b A B
+        b_min.x
     } else {
-        // b_velocity.x が正なのでマリオの右側がぶつかっているので，左側に補正する
-        (a_min.x - b_max.x).max(-b_velocity.x)
+        // b a B A
+        b_max.x
     };
-    let y_setback = if b_velocity.y < 0.0 {
+    let collide_point_y = if b_min.y < a_max.y {
         // a b A B
-        // a b A B
-        // これはプラスの値で，|b_velocity.x| 以下になる筈
-        if (a_max.y - b_min.y) - (-b_velocity.y) > 0.001 {
-            // もし，そうでないなら，x 方向の補正はいらない状況だと考える
-            0.0
-        } else {
-            // (a_max.y - b_min.y).min(-b_velocity.y)
-            a_max.y - b_min.y
-        }
+        b_min.y
     } else {
         // b a B A
-        // b a B A
-        // これは，マイナスの値で，絶対値は b_velocity.x 以下になる筈
-        if -(a_min.y - b_max.y) - b_velocity.y > 0.001 {
-            // もし，そうでないなら，x 方向の補正はいらない状況だと考える
-            0.0
-        } else {
-            a_min.y - b_max.y
-        }
+        b_max.y
+    };
+
+    let collision = if let Some(alpha) = calc_alpha(a_min.x, collide_point_x, b_velocity.x) {
+        let setback = (alpha - 1.0) * b_velocity;
+        Collision::Left((setback.x, setback.y))
+    } else if let Some(alpha) = calc_alpha(a_max.x, collide_point_x, b_velocity.x) {
+        let setback = (alpha - 1.0) * b_velocity;
+        Collision::Right((setback.x, setback.y))
+    } else if let Some(alpha) = calc_alpha(a_min.y, collide_point_y, b_velocity.y) {
+        let setback = (alpha - 1.0) * b_velocity;
+        Collision::Bottom((setback.x, setback.y))
+    } else if let Some(alpha) = calc_alpha(a_max.y, collide_point_y, b_velocity.y) {
+        let setback = (alpha - 1.0) * b_velocity;
+        Collision::Top((setback.x, setback.y))
+    } else {
+        Collision::Inside
     };
 
     println!(
-        "velocity({}, {}), x_setback:{}, y_setback:{}",
-        b_velocity.x, b_velocity.y, x_setback, y_setback
+        "velocity({}, {}), collision:{:?}",
+        b_velocity.x, b_velocity.y, collision
     );
-    return (x_setback, y_setback);
+    Some(collision)
+}
+
+fn calc_alpha(a_pos: f32, b_pos: f32, b_velocity: f32) -> Option<f32> {
+    let b_current_pos = b_pos - b_velocity;
+
+    let alpha = (a_pos - b_current_pos) / b_velocity;
+    if alpha.is_finite() && (0.0..=1.0).contains(&alpha) {
+        Some(alpha)
+    } else {
+        None
+    }
 }
