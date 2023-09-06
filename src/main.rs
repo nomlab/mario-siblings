@@ -267,7 +267,7 @@ fn check_for_collisions(
     let mut is_on_ground = false;
 
     for (transform, block) in &block_query {
-        if let Some(collision) = standback(
+        if let Some(collision) = collide_standback(
             transform.translation,
             transform.scale.truncate(),
             mario_pos,
@@ -275,61 +275,61 @@ fn check_for_collisions(
             mario_velocity,
         ) {
             match collision {
-                Collision::Top((x_setback, y_setback)) => {
+                Collision(Surface::Top, factor) => {
                     if block.collision_top {
-                        dx = x_setback;
-                        dy = y_setback;
+                        println!("Collision: {:?} mario_velocity: {},{}", collision, mario_velocity.x, mario_velocity.y);
+                        dx = 0.0;
+                        dy = - mario_velocity.y * (1.0 - factor);
                         is_on_ground = true;
                     }
                 }
-                Collision::Bottom((x_setback, y_setback)) => {
+                Collision(Surface::Bottom, factor) => {
                     if block.collision_bottom {
-                        dx = x_setback;
-                        dy = y_setback;
+                        println!("Collision: {:?} mario_velocity: {},{}", collision, mario_velocity.x, mario_velocity.y);
+                        dx = 0.0;
+                        dy = - mario_velocity.y * (1.0 - factor);
                     }
                 }
-                Collision::Left((x_setback, y_setback)) => {
+                Collision(Surface::Left, factor) => {
                     if block.collision_left {
-                        dx = x_setback;
-                        dy = y_setback;
+                        println!("Collision: {:?} mario_velocity: {},{}", collision, mario_velocity.x, mario_velocity.y);
+                        dx = - mario_velocity.x * (1.0 - factor);
+                        dy = 0.0;
                     }
                 }
-                Collision::Right((x_setback, y_setback)) => {
+                Collision(Surface::Right, factor) => {
                     if block.collision_right {
-                        dx = x_setback;
-                        dy = y_setback;
+                        dx = - mario_velocity.x * (1.0 - factor);
+                        println!("Collision: {:?} mario_velocity: {},{}", collision, mario_velocity.x, mario_velocity.y);
+                        dy = 0.0;
                     }
                 }
-                Collision::Inside => {
-                    // do nothing
+                Collision(Surface::None, _) => {
+                    // Do nothing
                 }
             }
-        };
+        }
     }
     println!(
-        "collision:(dx: {}, dy: {}, is_on_ground: {})",
+        "(dx: {}, dy: {}, is_on_ground: {})",
         dx, dy, is_on_ground
     );
     (dx, dy, is_on_ground)
 }
 
 #[derive(Debug)]
-enum Collision {
-    Top((f32, f32)),
-    Bottom((f32, f32)),
-    Left((f32, f32)),
-    Right((f32, f32)),
-    Inside,
+enum Surface {
+    Top,
+    Bottom,
+    Left,
+    Right,
+    None,
 }
 
-/// Axis-aligned bounding box collision with "side" detection
-/// * `a_pos` and `b_pos` are the center positions of the rectangles, typically obtained by
-/// extracting the `translation` field from a `Transform` component
-/// * `a_size` and `b_size` are the dimensions (width and height) of the rectangles.
-///
-/// Returns Vec2 that means how `B` should stand-back if `B` has collided with `A`.
-///
-fn standback(
+#[derive(Debug)]
+struct Collision(Surface, f32);
+
+fn collide_standback(
     a_pos: Vec3,
     a_size: Vec2,
     b_pos: Vec3,
@@ -338,10 +338,10 @@ fn standback(
 ) -> Option<Collision> {
     let a_min = a_pos.truncate() - a_size / 2.0;
     let a_max = a_pos.truncate() + a_size / 2.0;
-
     let b_min = b_pos.truncate() - b_size / 2.0;
     let b_max = b_pos.truncate() + b_size / 2.0;
-    let b_velocity = Vec2::new(b_velocity.x, b_velocity.y);
+    let b_vx = b_velocity.x;
+    let b_vy = b_velocity.y;
 
     // a A b B or b B a A
     if a_max.x <= b_min.x || b_max.x <= a_min.x {
@@ -352,51 +352,44 @@ fn standback(
         return None;
     }
 
-    let collide_point_x = if b_min.x < a_max.x {
-        // a b A B
-        b_min.x
+    let (x_direction, dx) = if b_vx > 0.0 {
+        // bumped A's Left: b a-B A
+        (Surface::Left, b_max.x - a_min.x)
+    } else if b_vx < 0.0 {
+        // bumped A's Right: a b-A B
+        (Surface::Right, a_max.x - b_min.x)
     } else {
-        // b a B A
-        b_max.x
-    };
-    let collide_point_y = if b_min.y < a_max.y {
-        // a b A B
-        b_min.y
-    } else {
-        // b a B A
-        b_max.y
+        (Surface::None, 0.0)
     };
 
-    let collision = if let Some(alpha) = calc_alpha(a_min.x, collide_point_x, b_velocity.x) {
-        let setback = (alpha - 1.0) * b_velocity;
-        Collision::Left((setback.x, setback.y))
-    } else if let Some(alpha) = calc_alpha(a_max.x, collide_point_x, b_velocity.x) {
-        let setback = (alpha - 1.0) * b_velocity;
-        Collision::Right((setback.x, setback.y))
-    } else if let Some(alpha) = calc_alpha(a_min.y, collide_point_y, b_velocity.y) {
-        let setback = (alpha - 1.0) * b_velocity;
-        Collision::Bottom((setback.x, setback.y))
-    } else if let Some(alpha) = calc_alpha(a_max.y, collide_point_y, b_velocity.y) {
-        let setback = (alpha - 1.0) * b_velocity;
-        Collision::Top((setback.x, setback.y))
+    let (y_direction, dy) = if b_vy > 0.0 {
+        // bumped A's Bottom:
+        // A
+        // B
+        // |
+        // a
+        // b
+        (Surface::Bottom, b_max.y - a_min.y)
+    } else if b_vy < 0.0 {
+        // bumped A's Top:
+        // B
+        // A
+        // |
+        // b
+        // a
+        (Surface::Top, a_max.y - b_min.y)
     } else {
-        Collision::Inside
+        (Surface::None, 0.0)
     };
 
-    println!(
-        "velocity({}, {}), collision:{:?}",
-        b_velocity.x, b_velocity.y, collision
-    );
-    Some(collision)
-}
+    let x_factor = (b_vx.abs() - dx.abs()) / b_vx.abs();
+    let y_factor = (b_vy.abs() - dy.abs()) / b_vy.abs();
 
-fn calc_alpha(a_pos: f32, b_pos: f32, b_velocity: f32) -> Option<f32> {
-    let b_current_pos = b_pos - b_velocity;
-
-    let alpha = (a_pos - b_current_pos) / b_velocity;
-    if alpha.is_finite() && (0.0..=1.0).contains(&alpha) {
-        Some(alpha)
+    let (direction, factor) = if x_factor > y_factor {
+        (x_direction, x_factor)
     } else {
-        None
-    }
+        (y_direction, y_factor)
+    };
+
+    return Some(Collision(direction, factor))
 }
