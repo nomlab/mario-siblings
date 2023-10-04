@@ -6,15 +6,18 @@ const TIME_STEP: f32 = 1.0 / 60.0;
 
 const UNIT: f32 = 10.0;
 
-const STAGE_WIDTH: isize = 32;
-const STAGE_HEIGHT: isize = 25;
-const STAGE_X_OFFSET: isize = 1;
+const VISIBLE_STAGE_WIDTH: isize = 32;
+const WHOLE_STAGE_WIDTH: isize = 36;
+const VISIBLE_STAGE_HEIGHT: isize = 25;
+const WHOLE_STAGE_HEIGHT: isize = 25;
 
-const SCREEN_WIDTH: f32 = UNIT * STAGE_WIDTH as f32;
-const SCREEN_HEIGHT: f32 = UNIT * STAGE_HEIGHT as f32;
+const SCREEN_WIDTH: f32 = UNIT * VISIBLE_STAGE_WIDTH as f32;
+const SCREEN_HEIGHT: f32 = UNIT * VISIBLE_STAGE_HEIGHT as f32;
 
-const BLOCK_SIZE: Vec3 = Vec3::new(10.0, 10.0, 0.0);
+const BLOCK_SIZE: Vec3 = Vec3::new(UNIT, UNIT, 0.0);
 const MARIO_SIZE: Vec3 = Vec3::new(UNIT * 2.0, UNIT * 2.5, 0.0);
+
+const WARP_X_BORDER: f32 = SCREEN_WIDTH / 2.0 + MARIO_SIZE.x / 2.0;
 
 const WALKING_SPEED: f32 = 2.0;
 const JUMP_SPEED: f32 = 7.0;
@@ -24,31 +27,31 @@ const BACKGROUND_COLOR: Color = Color::rgb(0.0, 0.0, 0.0);
 // const MARIO_COLOR: Color = Color::rgb(1.0, 0.0, 0.0);
 
 const STAGE: [&str; 25] = [
-    "XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX",
-    "|________________________________|",
-    "|________________________________|",
-    "|________________________________|",
-    "|________________________________|",
-    "|________________________________|",
-    "XXXXXXXXXXXXXX]____[XXXXXXXXXXXXXX",
-    "|________________________________|",
-    "|________________________________|",
-    "|________________________________|",
-    "|________________________________|",
-    "|________________________________|",
-    "|________[XXXXXXXXXXXXXX]________|",
-    "XXXX]________________________[XXXX",
-    "|________________________________|",
-    "|________________________________|",
-    "|________________________________|",
-    "|________________________________|",
-    "XXXXXXXXXXXX]____M___[XXXXXXXXXXXX",
-    "|________________________________|",
-    "|________________________________|",
-    "|________________________________|",
-    "|________________________________|",
-    "|________________________________|",
-    "XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX",
+    "XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX",
+    "____________________________________",
+    "____________________________________",
+    "____________________________________",
+    "____________________________________",
+    "____________________________________",
+    "XXXXXXXXXXXXXXX]____[XXXXXXXXXXXXXXX",
+    "____________________________________",
+    "____________________________________",
+    "____________________________________",
+    "____________________________________",
+    "____________________________________",
+    "__________[XXXXXXXXXXXXXX]__________",
+    "XXXXX]________________________[XXXXX",
+    "____________________________________",
+    "____________________________________",
+    "____________________________________",
+    "____________________________________",
+    "XXXXXXXXXXXXX]____M___[XXXXXXXXXXXXX",
+    "____________________________________",
+    "____________________________________",
+    "____________________________________",
+    "____________________________________",
+    "____________________________________",
+    "XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX",
 ];
 
 fn main() {
@@ -81,7 +84,6 @@ struct Block {
     collision_bottom: bool,
     collision_right: bool,
     collision_left: bool,
-    outside: bool,
 }
 
 impl Block {
@@ -91,7 +93,6 @@ impl Block {
             collision_bottom: true,
             collision_right: false,
             collision_left: false,
-            outside: false,
         }
     }
 
@@ -101,7 +102,6 @@ impl Block {
             collision_bottom: true,
             collision_right: false,
             collision_left: true,
-            outside: false,
         }
     }
     fn right_edge_block() -> Self {
@@ -110,16 +110,6 @@ impl Block {
             collision_bottom: true,
             collision_right: true,
             collision_left: false,
-            outside: false,
-        }
-    }
-    fn outside_block() -> Self {
-        Self {
-            collision_top: false,
-            collision_bottom: false,
-            collision_right: false,
-            collision_left: false,
-            outside: true,
         }
     }
 }
@@ -142,15 +132,13 @@ fn setup(mut commands: Commands) {
 fn make_stage(mut commands: Commands, asset_server: Res<AssetServer>) {
     for (i, stage_row) in STAGE.iter().enumerate() {
         for (j, c) in stage_row.as_bytes().iter().enumerate() {
-            let x_coord =
-                (j as isize - STAGE_X_OFFSET - (STAGE_WIDTH / 2)) as f32 * UNIT + 0.5 * UNIT;
-            let y_coord = (-(i as isize) + (STAGE_HEIGHT / 2)) as f32 * UNIT;
+            let x_coord = (j as isize - (WHOLE_STAGE_WIDTH / 2)) as f32 * UNIT + 0.5 * UNIT;
+            let y_coord = (-(i as isize) + (WHOLE_STAGE_HEIGHT / 2)) as f32 * UNIT;
             match c {
                 b'X' => spawn_block(&mut commands, Block::normal_block(), x_coord, y_coord),
                 b']' => spawn_block(&mut commands, Block::right_edge_block(), x_coord, y_coord),
                 b'[' => spawn_block(&mut commands, Block::left_edge_block(), x_coord, y_coord),
                 b'M' => spawn_mario(&mut commands, &asset_server, x_coord, y_coord),
-                b'|' => spawn_block(&mut commands, Block::outside_block(), x_coord, y_coord),
                 _ => {}
             };
         }
@@ -227,7 +215,7 @@ fn calc_velocity(
         if keyboard_input.pressed(KeyCode::Right) {
             dx = WALKING_SPEED;
         }
-        if keyboard_input.just_pressed(KeyCode::Up) {
+        if keyboard_input.pressed(KeyCode::Up) {
             dy = JUMP_SPEED;
         }
         if keyboard_input.pressed(KeyCode::Down) {}
@@ -254,6 +242,11 @@ fn update_position(
     mario.is_on_ground = is_on_ground;
     mario_transform.translation.x = mario_pos.x + dx;
     mario_transform.translation.y = mario_pos.y + dy;
+
+    // When mario reaches edge of screen, warp to the opposite edge
+    if mario_transform.translation.x.abs() > WARP_X_BORDER {
+        mario_transform.translation.x *= -0.99
+    }
 }
 
 fn check_for_collisions(
@@ -277,30 +270,42 @@ fn check_for_collisions(
             match collision {
                 Collision(Surface::Top, factor) => {
                     if block.collision_top {
-                        println!("Collision: {:?} mario_velocity: {},{}", collision, mario_velocity.x, mario_velocity.y);
+                        println!(
+                            "Collision: {:?} mario_velocity: {},{}",
+                            collision, mario_velocity.x, mario_velocity.y
+                        );
                         dx = 0.0;
-                        dy = - mario_velocity.y * (1.0 - factor);
+                        dy = -mario_velocity.y * (1.0 - factor);
                         is_on_ground = true;
                     }
                 }
                 Collision(Surface::Bottom, factor) => {
                     if block.collision_bottom {
-                        println!("Collision: {:?} mario_velocity: {},{}", collision, mario_velocity.x, mario_velocity.y);
+                        println!(
+                            "Collision: {:?} mario_velocity: {},{}",
+                            collision, mario_velocity.x, mario_velocity.y
+                        );
                         dx = 0.0;
-                        dy = - mario_velocity.y * (1.0 - factor);
+                        dy = -mario_velocity.y * (1.0 - factor);
                     }
                 }
                 Collision(Surface::Left, factor) => {
                     if block.collision_left {
-                        println!("Collision: {:?} mario_velocity: {},{}", collision, mario_velocity.x, mario_velocity.y);
-                        dx = - mario_velocity.x * (1.0 - factor);
+                        println!(
+                            "Collision: {:?} mario_velocity: {},{}",
+                            collision, mario_velocity.x, mario_velocity.y
+                        );
+                        dx = -mario_velocity.x * (1.0 - factor);
                         dy = 0.0;
                     }
                 }
                 Collision(Surface::Right, factor) => {
                     if block.collision_right {
-                        dx = - mario_velocity.x * (1.0 - factor);
-                        println!("Collision: {:?} mario_velocity: {},{}", collision, mario_velocity.x, mario_velocity.y);
+                        dx = -mario_velocity.x * (1.0 - factor);
+                        println!(
+                            "Collision: {:?} mario_velocity: {},{}",
+                            collision, mario_velocity.x, mario_velocity.y
+                        );
                         dy = 0.0;
                     }
                 }
@@ -310,10 +315,7 @@ fn check_for_collisions(
             }
         }
     }
-    println!(
-        "(dx: {}, dy: {}, is_on_ground: {})",
-        dx, dy, is_on_ground
-    );
+    println!("(dx: {}, dy: {}, is_on_ground: {})", dx, dy, is_on_ground);
     (dx, dy, is_on_ground)
 }
 
@@ -391,5 +393,5 @@ fn collide_standback(
         (y_direction, y_factor)
     };
 
-    return Some(Collision(direction, factor))
+    Some(Collision(direction, factor))
 }
