@@ -19,6 +19,8 @@ const MARIO_SIZE: Vec3 = Vec3::new(UNIT * 2.0, UNIT * 2.5, 0.0);
 
 const WARP_X_BORDER: f32 = SCREEN_WIDTH / 2.0 + MARIO_SIZE.x / 2.0;
 
+const MAX_N_KAME: usize = 2;
+
 const WALKING_SPEED: f32 = 2.0;
 const JUMP_SPEED: f32 = 7.0;
 const GRAVITY: f32 = 0.4;
@@ -28,7 +30,7 @@ const BACKGROUND_COLOR: Color = Color::rgb(0.0, 0.0, 0.0);
 
 const STAGE: [&str; 25] = [
     "XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX",
-    "____________________________________",
+    "__E______________________________E__",
     "____________________________________",
     "____________________________________",
     "____________________________________",
@@ -72,7 +74,9 @@ fn main() {
             SystemSet::new()
                 .with_run_criteria(FixedTimestep::step(TIME_STEP as f64))
                 .with_system(update_velocity.before(update_position))
-                .with_system(update_position),
+                .with_system(update_position.before(update_enemy_generator))
+                .with_system(update_enemy_generator.before(update_component_state))
+                .with_system(update_component_state),
         )
         .add_system(window::close_on_esc)
         .run();
@@ -119,6 +123,12 @@ struct Mario {
     is_on_ground: bool,
 }
 
+#[derive(Component)]
+struct EnemyGenerator;
+
+#[derive(Component)]
+struct Kame;
+
 #[derive(Default)]
 struct CollisionEvent;
 
@@ -139,6 +149,7 @@ fn make_stage(mut commands: Commands, asset_server: Res<AssetServer>) {
                 b']' => spawn_block(&mut commands, Block::right_edge_block(), x_coord, y_coord),
                 b'[' => spawn_block(&mut commands, Block::left_edge_block(), x_coord, y_coord),
                 b'M' => spawn_mario(&mut commands, &asset_server, x_coord, y_coord),
+                b'E' => spawn_enemy_generator(&mut commands, x_coord, y_coord),
                 _ => {}
             };
         }
@@ -179,6 +190,50 @@ fn spawn_mario(commands: &mut Commands, asset: &Res<AssetServer>, x_coord: f32, 
             is_on_ground: false,
         },
         Velocity(Vec2::new(0.0, 0.0)),
+    ));
+}
+
+fn spawn_enemy_generator(commands: &mut Commands, x_coord: f32, y_coord: f32) {
+    commands.spawn((
+        SpriteBundle {
+            transform: Transform {
+                translation: Vec3::new(x_coord, y_coord, 0.0),
+                scale: BLOCK_SIZE,
+                ..default()
+            },
+            ..default()
+        },
+        EnemyGenerator,
+    ));
+}
+
+fn update_enemy_generator(
+    mut commands: Commands,
+    enemy_generator_query: Query<(&Transform, &EnemyGenerator), Without<Mario>>,
+    kame_query: Query<&Kame, Without<Mario>>,
+) {
+    for (transform, _enemy_generator) in &enemy_generator_query {
+        if kame_query.iter().len() <= MAX_N_KAME {
+            spawn_kame(
+                &mut commands,
+                transform.translation.x,
+                transform.translation.y,
+            )
+        }
+    }
+}
+
+fn spawn_kame(commands: &mut Commands, x_coord: f32, y_coord: f32) {
+    commands.spawn((
+        SpriteBundle {
+            transform: Transform {
+                translation: Vec3::new(x_coord, y_coord, 0.0),
+                scale: MARIO_SIZE,
+                ..default()
+            },
+            ..default()
+        },
+        Kame,
     ));
 }
 
@@ -394,4 +449,22 @@ fn collide_standback(
     };
 
     Some(Collision(direction, factor))
+}
+
+fn update_component_state(
+    mut commands: Commands,
+    mario_query: Query<(&Velocity, &Transform, &Mario), With<Mario>>,
+    kame_query: Query<(&Transform, &Kame, Entity), Without<Mario>>,
+) {
+    let (mario_velocity, mario_transform, _mario) = mario_query.single();
+    let mario_pos = mario_transform.translation;
+    let mario_size = mario_transform.scale.truncate();
+    for (kame_transform, _kame, kame_entity) in kame_query.iter() {
+        let kame_pos = kame_transform.translation;
+        let kame_size = kame_transform.scale.truncate();
+        let res = collide_standback(kame_pos, kame_size, mario_pos, mario_size, mario_velocity);
+        if res.is_some() {
+            commands.entity(kame_entity).despawn();
+        }
+    }
 }
